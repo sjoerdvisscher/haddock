@@ -39,7 +39,7 @@ module Haddock.Interface (
 
 import Haddock.GhcUtils (moduleString, pretty)
 import Haddock.Interface.AttachInstances (attachInstances)
-import Haddock.Interface.Create (createInterface1)
+import Haddock.Interface.Create (createInterface1, createInterface1')
 import Haddock.Interface.Rename (renameInterface)
 import Haddock.InterfaceFile (InterfaceFile, ifInstalledIfaces, ifLinkEnv)
 import Haddock.Options hiding (verbosity)
@@ -66,16 +66,23 @@ import GHC.Driver.Main
 import GHC.Core.InstEnv
 import GHC.Driver.Session hiding (verbosity)
 import GHC.HsToCore.Docs (getMainDeclBinder)
+import GHC.Iface.Binary (CheckHiWay(..), TraceBinIFace(..), readBinIface)
+import GHC.IfaceToCore (tcIfaceDecls, tcIfaceInst, tcIfaceFamInst)
+import GHC.Tc.Utils.Monad (initIfaceLoad, initIfaceLcl, updateEps_)
+import GHC.Tc.Utils.Env (lookupGlobal_maybe)
 import GHC.Types.Error (mkUnknownDiagnostic)
 import GHC.Types.Name.Occurrence (emptyOccEnv)
+import GHC.Types.Name.Env (extendNameEnvList)
+import GHC.Core.InstEnv (extendInstEnvList)
+import GHC.Core.FamInstEnv (extendFamInstEnvList)
+import GHC.Unit.External (ExternalPackageState (..))
+import GHC.Unit.Home.ModInfo
 import GHC.Unit.Module.Graph (ModuleGraphNode (..))
 import GHC.Unit.Module.ModDetails
+import GHC.Unit.Module.ModIface (mi_decls, mi_semantic_module, mi_boot, mi_insts, mi_fam_insts)
 import GHC.Unit.Module.ModSummary (isBootSummary)
-import GHC.Utils.Outputable ((<+>), pprModuleName)
+import GHC.Utils.Outputable (Outputable, (<+>), pprModuleName, text)
 import GHC.Utils.Error (withTiming)
-import GHC.Unit.Home.ModInfo
-import GHC.Tc.Utils.Env (lookupGlobal_maybe)
-import GHC.Utils.Outputable (Outputable)
 
 #if defined(mingw32_HOST_OS)
 import System.IO
@@ -109,8 +116,12 @@ processModules verbosity modules flags extIfaces = do
         | ext <- extIfaces
         , iface <- ifInstalledIfaces ext
         ]
+      oneShotHiFile = optOneShot flags
 
-  interfaces <- createIfaces verbosity modules flags instIfaceMap
+  interfaces <- maybe
+    (createIfaces verbosity modules flags instIfaceMap)
+    (createOneShotIface verbosity flags instIfaceMap)
+    oneShotHiFile
 
   let exportedNames =
         Set.unions $ map (Set.fromList . ifaceExports) $
@@ -312,6 +323,68 @@ processModule verbosity modSummary flags ifaceMap instIfaceMap = do
 
   return (Just interface)
 
+
+-- | Create a single interface from a one-shot .hi file
+createOneShotIface
+    :: Verbosity
+    -- ^ Verbosity requested by the caller
+    -> [Flag]
+    -- ^ Command line flags which Hadddock was invoked with
+    -> InstIfaceMap
+    -- ^ Map from module to corresponding installed interface file
+    -> FilePath
+    -- ^ Path to the one-shot .hi file
+    -> Ghc [Interface]
+    -- ^ Resulting interfaces
+createOneShotIface verbosity flags instIfaceMap hiFilePath = do
+
+  out verbosity verbose $ "Checking interface " ++ hiFilePath ++ "..."
+
+  hsc_env <- getSession
+  dflags <- getDynFlags
+
+  let unit_state = hsc_units hsc_env
+      name_cache = hsc_NC hsc_env
+      profile = targetProfile dflags
+      hiPaths = optOneShotDepHis flags ++ [hiFilePath]
+
+  -- Load all .hi files and update the EPS
+  ifaces <- liftIO $ initIfaceLoad hsc_env $ do
+
+    for hiPaths $ \hiFile -> do
+
+      iface <- liftIO $ readBinIface profile name_cache IgnoreHiWay QuietBinIFace hiFile
+
+      initIfaceLcl (mi_semantic_module iface) (text "createOneShotIface") (mi_boot iface) $ do
+
+        new_eps_decls     <- tcIfaceDecls False (mi_decls iface)
+        new_eps_insts     <- mapM tcIfaceInst (mi_insts iface)
+        new_eps_fam_insts <- mapM tcIfaceFamInst (mi_fam_insts iface)
+
+        updateEps_ $ \eps -> eps
+          { eps_PTE          = extendNameEnvList (eps_PTE eps) new_eps_decls
+          , eps_inst_env     = extendInstEnvList (eps_inst_env eps) new_eps_insts
+          , eps_fam_inst_env = extendFamInstEnvList (eps_fam_inst_env eps) new_eps_fam_insts
+          }
+
+      pure iface
+
+  -- The last interface in the list is the one from the one-shot-hi option
+  let iface = last ifaces
+      hieFilePath = case optOneShotHie flags of
+        Just hie -> hie
+        Nothing -> if Flag_HyperlinkedSource `elem` flags
+          then throwE $ "Missing .hie for " ++ hiFilePath ++ ", use --one-shot-hie to provide one"
+          else "unused-hie-file-path"
+
+  !interface <- do
+    logger <- getLogger
+    {-# SCC createInterface #-}
+      withTiming logger "createInterface" (const ()) $
+        runIfM (liftIO . fmap dropErr . lookupGlobal_maybe hsc_env) $
+          createInterface1' flags unit_state dflags hieFilePath iface mempty instIfaceMap mempty
+
+  pure [interface]
 
 --------------------------------------------------------------------------------
 -- * Building of cross-linking environment

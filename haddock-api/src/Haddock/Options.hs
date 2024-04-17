@@ -31,6 +31,9 @@ module Haddock.Options (
   optShowInterfaceFile,
   optLaTeXStyle,
   optMathjax,
+  optOneShot,
+  optOneShotHie,
+  optOneShotDepHis,
   qualification,
   sinceQualification,
   verbosity,
@@ -121,6 +124,9 @@ data Flag
   | Flag_IgnoreLinkSymbol String
   | Flag_ParCount (Maybe Int)
   | Flag_TraceArgs
+  | Flag_OneShotHi FilePath
+  | Flag_OneShotHie FilePath
+  | Flag_OneShotDepHi FilePath
   deriving (Eq, Show)
 
 
@@ -139,6 +145,12 @@ options backwardsCompat =
       "write the resulting interface to FILE",
     Option []     ["show-interface"] (ReqArg Flag_ShowInterface "FILE")
       "print the interface in a human readable form",
+    Option [] ["one-shot-hi"] (ReqArg Flag_OneShotHi "FILE")
+      "generate documentation for a single module only, given its .hi file",
+    Option [] ["one-shot-hie"] (ReqArg Flag_OneShotHie "FILE")
+      "provide the .hie file for generating hyperlinked source in one-shot mode",
+    Option [] ["one-shot-dep-hi"] (ReqArg Flag_OneShotDepHi "FILE")
+      "provide .hi files for dependencies in one-shot mode",
 --    Option ['S']  ["docbook"]  (NoArg Flag_DocBook)
 --  "output in DocBook XML",
     Option ['h']  ["html"]     (NoArg Flag_Html)
@@ -322,6 +334,17 @@ optDumpInterfaceFile flags = optLast [ str | Flag_DumpInterface str <- flags ]
 
 optShowInterfaceFile :: [Flag] -> Maybe FilePath
 optShowInterfaceFile flags = optLast [ str | Flag_ShowInterface str <- flags ]
+
+
+optOneShot :: [Flag] -> Maybe FilePath
+optOneShot flags = optLast [ str | Flag_OneShotHi str <- flags ]
+
+optOneShotHie :: [Flag] -> Maybe FilePath
+optOneShotHie flags = optLast [ str | Flag_OneShotHie str <- flags ]
+
+optOneShotDepHis :: [Flag] -> [FilePath]
+optOneShotDepHis flags = [ str | Flag_OneShotDepHi str <- flags ]
+
 
 optLaTeXStyle :: [Flag] -> Maybe String
 optLaTeXStyle flags = optLast [ str | Flag_LaTeXStyle str <- flags ]

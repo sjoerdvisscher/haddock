@@ -30,7 +30,7 @@
 -- which creates a Haddock 'Interface' from the typechecking
 -- results 'TypecheckedModule' from GHC.
 -----------------------------------------------------------------------------
-module Haddock.Interface.Create (IfM, runIfM, createInterface1) where
+module Haddock.Interface.Create (IfM, runIfM, createInterface1, createInterface1') where
 
 import Haddock.Convert (PrintRuntimeReps (..), tyThingToLHsDecl)
 import Haddock.GhcUtils
@@ -83,7 +83,7 @@ createInterface1
   -> InstIfaceMap
   -> ([ClsInst],[FamInst])
   -> IfM m Interface
-createInterface1 flags unit_state mod_sum mod_iface ifaces inst_ifaces (instances, fam_instances) = do
+createInterface1 flags unit_state mod_sum mod_iface ifaces inst_ifaces (instances, fam_instances) =
 
   let
     ModSummary
@@ -97,8 +97,23 @@ createInterface1 flags unit_state mod_sum mod_iface ifaces inst_ifaces (instance
           ml_hie_file
         }
       } = mod_sum
+  in
+    createInterface1' flags unit_state ms_hspp_opts ml_hie_file mod_iface ifaces inst_ifaces (instances, fam_instances)
 
-    dflags  = ms_hspp_opts
+createInterface1'
+  :: MonadIO m
+  => [Flag]
+  -> UnitState
+  -> DynFlags
+  -> FilePath
+  -> ModIface
+  -> IfaceMap
+  -> InstIfaceMap
+  -> ([ClsInst],[FamInst])
+  -> IfM m Interface
+createInterface1' flags unit_state dflags hie_file mod_iface ifaces inst_ifaces (instances, fam_instances) = do
+
+  let
     mdl     = mi_module mod_iface
     sem_mdl = mi_semantic_module mod_iface
     is_sig  = isJust (mi_sig_of mod_iface)
@@ -218,7 +233,7 @@ createInterface1 flags unit_state mod_sum mod_iface ifaces inst_ifaces (instance
     {
       ifaceMod               = mdl
     , ifaceIsSig             = is_sig
-    , ifaceHieFile           = ml_hie_file
+    , ifaceHieFile           = hie_file
     , ifaceInfo              = info
     , ifaceDoc               = Documentation header_doc mod_warning
     , ifaceRnDoc             = Documentation Nothing Nothing

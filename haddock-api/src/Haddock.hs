@@ -213,7 +213,7 @@ haddockWithGhc ghc args = handleTopExceptions $ do
         putMsg logger $ renderJson (jsonInterfaceFile ifaceFile)
 
     -- If we were given source files to generate documentation from, do it
-    if not (null files) then do
+    if not (null files) || isJust (optOneShot flags) then do
       (packages, ifaces, homeLinks) <- readPackagesAndProcessModules flags files
       let packageInfo = PackageInfo { piPackageName =
                                         fromMaybe (PackageName mempty) (optPackageName flags)
